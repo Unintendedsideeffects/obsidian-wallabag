@@ -13,9 +13,9 @@ export interface TextSetting {
 
 export class WallabagSettingTab extends PluginSettingTab {
   private plugin: WallabagPlugin;
-  private isAuthenticated: (_: void) => boolean;
+  private isAuthenticated: () => boolean;
 
-  constructor(app: App, plugin: WallabagPlugin, isAuthenticated: (_: void) => boolean) {
+  constructor(app: App, plugin: WallabagPlugin, isAuthenticated: () => boolean) {
     super(app, plugin);
     this.plugin = plugin;
     this.isAuthenticated = isAuthenticated;

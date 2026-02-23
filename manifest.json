@@ -2,7 +2,7 @@
   "id": "wallabag",
   "name": "Wallabag",
   "version": "0.3.2",
-  "minAppVersion": "1.1.0",
+  "minAppVersion": "1.12.2",
   "description": "Sync your Wallabag articles.",
   "author": "Hüseyin Zengin",
   "authorUrl": "https://github.com/huseyz",
