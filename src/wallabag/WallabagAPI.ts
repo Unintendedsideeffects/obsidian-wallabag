@@ -12,6 +12,28 @@ interface WallabagAnnotation {
   quote: string;
 }
 
+interface WallabagTag {
+  slug: string;
+}
+
+interface WallabagArticleRaw {
+  id: number;
+  tags: WallabagTag[];
+  title: string;
+  url: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+  published_at: string;
+  reading_time: string;
+  preview_picture: string;
+  domain_name: string;
+  annotations: WallabagAnnotation[];
+  is_archived: boolean;
+  is_starred: boolean;
+  given_url: string;
+}
+
 export interface WallabagArticle {
   id: number;
   tags: string[];
@@ -89,24 +111,24 @@ export default class WallabagAPI {
     });
   }
 
-  private convertWallabagArticle(article: any) {
-    const getTag = (tag: any) => (tag['slug'].startsWith('t:') ? tag['slug'].substring(2) : tag['slug']);
+  private convertWallabagArticle(article: WallabagArticleRaw): WallabagArticle {
+    const getTag = (tag: WallabagTag) => (tag.slug.startsWith('t:') ? tag.slug.substring(2) : tag.slug);
     return {
-      id: article['id'],
-      tags: article['tags'].map(getTag),
-      title: article['title'],
-      url: article['url'],
-      content: article['content'],
-      createdAt: article['created_at'],
-      updatedAt: article['updated_at'],
-      publishedAt: article['published_at'],
-      readingTime: article['reading_time'],
-      previewPicture: article['preview_picture'],
-      domainName: article['domain_name'],
-      annotations: article['annotations'],
-      isArchived: article['is_archived'],
-      isStarred: article['is_starred'],
-      givenUrl: article['given_url']
+      id: article.id,
+      tags: article.tags.map(getTag),
+      title: article.title,
+      url: article.url,
+      content: article.content,
+      createdAt: article.created_at,
+      updatedAt: article.updated_at,
+      publishedAt: article.published_at,
+      readingTime: article.reading_time,
+      previewPicture: article.preview_picture,
+      domainName: article.domain_name,
+      annotations: article.annotations,
+      isArchived: article.is_archived,
+      isStarred: article.is_starred,
+      givenUrl: article.given_url,
     };
   }
 
@@ -134,7 +156,7 @@ export default class WallabagAPI {
           .then(async (token) => {
             this.token = token;
             await this.plugin.onAuthenticated(this.token);
-            return this.tokenRefreshingFetch(url);
+            return this.tokenRefreshingFetch(url, method, body);
           })
           .catch(async (reason) => {
             console.log('Token refresh failed.', reason);
