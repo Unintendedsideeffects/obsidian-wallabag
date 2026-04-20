@@ -192,22 +192,25 @@ obsidian command id="wallabag:sync-push-frontmatter"
 
 ## Installation
 
-### Manually
+### From GitHub Releases
 
 - You need Obsidian v1.12.2+.
-- Download the latest release.
-- Create `[VAULT]/.obsidian/plugins/wallabag`.
-- Copy `main.js`, `manifest.json`, and `styles.css` into that folder.
-- Reload Obsidian and enable the plugin.
+- Open **[Releases](https://github.com/Unintendedsideeffects/obsidian-wallabag/releases)** and download **`wallabag-x.y.z.zip`** for the version you want (this is the full plugin bundle: `main.js`, `manifest.json`, `styles.css`).
+- Create `[VAULT]/.obsidian/plugins/wallabag` if it does not exist.
+- Extract the zip so those three files sit **directly** in the `wallabag` folder (not inside another nested folder).
+- Reload Obsidian and enable **Wallabag** under Community plugins.
+
+Releases are produced by CI when a **`v*`** tag is pushed; maintainers run `npm run package` locally to build `dist/wallabag-<version>.zip` before tagging if needed.
 
 ## Development
 
 ### Workflow
 
 - `npm install`
-- `npm run build`
+- `npm run build` — produces `main.js` at the repo root (gitignored)
+- `npm run package` — build plus `dist/wallabag-<version>.zip` for release
 - `npm run lint`
-- Copy the built plugin files into your vault's plugin directory
+- For local testing, copy `main.js`, `manifest.json`, and `styles.css` into your vault's plugin directory, or extract a release zip there
 - Reload the plugin in Obsidian
 
 ### State files
