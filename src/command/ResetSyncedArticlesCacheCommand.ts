@@ -2,8 +2,8 @@ import WallabagPlugin from 'main';
 import { Command, Notice } from 'obsidian';
 
 export default class ClearSyncedArticlesCacheCommand implements Command {
-  id = 'clear-synced-articles-cache';
-  name = 'Clear synced articles cache';
+  id = 'wallabag:clear-synced-cache';
+  name = 'Wallabag: Clear synced-articles cache';
 
   private plugin: WallabagPlugin;
   private syncedFilePath: string;
@@ -14,9 +14,9 @@ export default class ClearSyncedArticlesCacheCommand implements Command {
   }
 
   async callback() {
-    const notice = new Notice('Clearing synced articles cache.');
-    await this.plugin.app.vault.adapter.write(this.syncedFilePath, JSON.stringify([]));
-    notice.hide();
-    new Notice('Synced articles cache is cleared.');
+    if (await this.plugin.app.vault.adapter.exists(this.syncedFilePath)) {
+      await this.plugin.app.vault.adapter.write(this.syncedFilePath, JSON.stringify([]));
+    }
+    new Notice('Synced articles cache cleared.');
   }
 }

@@ -1,5 +1,5 @@
+import { FrontmatterState } from 'note/FrontmatterCodec';
 import { WallabagArticle } from 'wallabag/WallabagAPI';
-import { htmlToMarkdown } from 'obsidian';
 
 export default class NoteTemplate {
   content: string;
@@ -8,10 +8,18 @@ export default class NoteTemplate {
     this.content = content;
   }
 
-  fill(wallabagArticle: WallabagArticle, serverBaseUrl: string, convertHtmlToMarkdown: string, tagFormat: string, pdfLink = ''): string {
-    const content = wallabagArticle.content !== null ? wallabagArticle.content : '';
+  fill(
+    wallabagArticle: WallabagArticle,
+    serverBaseUrl: string,
+    content: string,
+    tagFormat: string,
+    frontmatter: FrontmatterState,
+    emitFullFrontmatter: boolean,
+    pdfLink = ''
+  ): string {
     const annotations = wallabagArticle.annotations.map((a) => '> ' + a.quote + (a.text ? '\n\n' + a.text : '')).join('\n\n');
     const variables: { [key: string]: string } = {
+      '{{frontmatter}}': this.renderFrontmatter(frontmatter),
       '{{id}}': wallabagArticle.id.toString(),
       '{{article_title}}': wallabagArticle.title,
       '{{original_link}}': wallabagArticle.url,
@@ -20,7 +28,7 @@ export default class NoteTemplate {
       '{{published_at}}': wallabagArticle.publishedAt,
       '{{updated_at}}': wallabagArticle.updatedAt,
       '{{wallabag_link}}': `${serverBaseUrl}/view/${wallabagArticle.id}`,
-      '{{content}}': convertHtmlToMarkdown === 'true' ? htmlToMarkdown(content) : content,
+      '{{content}}': content,
       '{{pdf_link}}': pdfLink,
       '{{tags}}': this.formatTags(wallabagArticle.tags, tagFormat),
       '{{reading_time}}': wallabagArticle.readingTime,
@@ -29,11 +37,17 @@ export default class NoteTemplate {
       '{{annotations}}': annotations,
       '{{is_archived}}': wallabagArticle.isArchived ? 'true' : 'false',
       '{{is_starred}}': wallabagArticle.isStarred ? 'true' : 'false',
+      '{{read}}': wallabagArticle.isArchived ? 'true' : 'false',
+      '{{starred}}': wallabagArticle.isStarred ? 'true' : 'false',
+      '{{date_read}}': wallabagArticle.archivedAt ?? '',
     };
     let noteContent = this.content;
     Object.keys(variables).forEach((key) => {
       noteContent = noteContent.replaceAll(key, variables[key]);
     });
+    if (emitFullFrontmatter && !noteContent.includes(variables['{{frontmatter}}'])) {
+      noteContent = `${variables['{{frontmatter}}']}\n${noteContent}`;
+    }
     return noteContent;
   }
 
@@ -47,12 +61,45 @@ export default class NoteTemplate {
       return '';
     }
   }
+
+  private renderFrontmatter(frontmatter: FrontmatterState): string {
+    const lines = ['---'];
+    Object.entries(frontmatter).forEach(([key, value]) => {
+      if (value === undefined) {
+        return;
+      }
+      if (Array.isArray(value)) {
+        if (value.length === 0) {
+          lines.push(`${key}: []`);
+          return;
+        }
+        lines.push(`${key}:`);
+        value.forEach((item) => lines.push(`  - ${this.escapeYaml(item)}`));
+        return;
+      }
+      if (value === null) {
+        lines.push(`${key}: null`);
+        return;
+      }
+      if (typeof value === 'boolean' || typeof value === 'number') {
+        lines.push(`${key}: ${String(value)}`);
+        return;
+      }
+      lines.push(`${key}: ${this.escapeYaml(value)}`);
+    });
+    lines.push('---');
+    return lines.join('\n');
+  }
+
+  private escapeYaml(value: string): string {
+    return JSON.stringify(value);
+  }
 }
 
 export const DefaultTemplate = new NoteTemplate(
-  '---\ntags: {{tags}}\n---\n ## {{article_title}} []({{original_link}})[]({{wallabag_link}})\n{{content}}'
+  '# {{article_title}}\n\n[Original]({{original_link}}) | [Wallabag]({{wallabag_link}})\n\n{{content}}'
 );
 
 export const PDFTemplate = new NoteTemplate(
-  '---\ntags: {{tags}}\n---\n ## {{article_title}} []({{original_link}})[]({{wallabag_link}})\nPDF: [[{{pdf_link}}]]'
+  '# {{article_title}}\n\n[Original]({{original_link}}) | [Wallabag]({{wallabag_link}})\n\nPDF: [[{{pdf_link}}]]'
 );

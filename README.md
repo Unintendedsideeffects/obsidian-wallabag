@@ -1,95 +1,221 @@
 # Obsidian Wallabag Plugin
 
-This plugin for [Obsidian](https://obsidian.md) allows you to sync [Wallabag](https://www.wallabag.it/en) items into Obsidian notes in various ways.
+This plugin syncs a self-hosted [Wallabag](https://www.wallabag.it/en) account with [Obsidian](https://obsidian.md). It now supports bidirectional workflows: pull articles into notes, push new URLs from watched notes, and sync frontmatter state changes back to Wallabag.
+
+## What v1 adds
+
+- **Pull sync** for unread and/or archived Wallabag entries
+- **Push new** from daily notes, clipper-tagged notes, or the active note
+- **Push frontmatter** for `read`, `starred`, and `tags`
+- **Watcher-driven sync** for timers, daily notes, clipper notes, and linked-note edits
+- **Headless support** via `settings.json` and command-driven auth/sync
+- **Dry-run remote writes by default** until you enable `push.enableRemoteWrites`
 
 ## Authentication
 
-After installing and enabling the plugin first you need to authenticate yourself with your Wallabag instance.
-You can follow the Wallabag's [iOS Setup guide](https://doc.wallabag.org/en/apps/ios.html) for obtaining the client attributes.
+You need a Wallabag server URL, client ID, client secret, username, and password.
 
-## Usage
+You can authenticate in two ways:
 
-This plugin fulfills a quite straightforward purpose; it syncs Wallabag articles and creates notes from them in various possible formats.
+1. Run **`Wallabag: Authenticate (interactive)`** and enter credentials in the modal.
+2. Fill `settings.json` and run **`Wallabag: Authenticate (from settings.json)`**.
 
-Use the command "Sync Wallabag Articles" to sync new articles. Plugin will keep a track of items synced so if you delete a created note, it won't be generated again unless you use the command "Clear synced articles cache" to reset the plugin cache. There is also a "Delete note and remove it from synced articles cache" command to remove an individual note from both the file system and synced article cache. This is useful to fetch any changes you made to the note in Wallabag (such as tags and annotations).
+Wallabag token data is stored in:
 
-There are various settings under the plugin settings you can use to personalize your workflow, here are some important ones:
+- `.__wallabag_token__`
 
-| Setting                                                | Decsription                                                                                                         |
-| :----------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------ |
-| Tag to sync                                            | Use this for syncing only the articles tagged with tag. If empty plugin will sync all the articles.                 |
-| Article Notes Folder                                   | Define the folder you want synced notes will be created. If empty notes will be created at the vault root.          |
-| Article Note Template                                  | Use to pass a custom template for notes. See the [Templating](#templating) for more details.                        |
-| Sync on startup                                        | If enabled, articles will be synced on startup.                                                                     |
-| Sync unread articles                                   | If enabled, unread articles will be synced.                                                                         |
-| Wallabag unread article notes folder location          | (optional) Choose the location where the unread synced article notes will be created.                               |
-| Sync archived articles                                 | If enabled, archived articles will be synced.                                                                       |
-| Wallabag archived article notes folder location        | (optional) Choose the location where the archived synced article notes will be created.                             |
-| Export as PDF                                          | If enabled synced articles will be exported as PDFs.                                                                |
-| Convert HTML Content extracted by Wallabag to Markdown | If enabled the content of the Wallabag article will be converted to markdown before being used for the new article. |
-| Archive article after sync                             | If enabled the article will be archived after being synced.                                                         |
-| Add article ID in the title                            | If enabled the article ID will be added to title.                                                                   |
-| Tag format                                             | Determines how the tags will be populated in the created not. CSV(tag1, tag2) or hashtags(#tag1 #tag2)              |
+## Settings model
+
+The plugin mirrors configuration between Obsidian's `data.json` and:
+
+- `[VAULT]/.obsidian/plugins/wallabag/settings.json`
+
+`settings.json` is the authoritative headless-editable file. The settings tab edits the same data.
+
+Important defaults:
+
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `pull.enabled` | `true` | Enables pull commands and timer pulls |
+| `push.enableRemoteWrites` | `false` | Mutating API calls stay in dry-run until enabled |
+| `push.pushDebounceMs` | `2000` | Debounce for watcher-triggered pushes |
+| `folders.notes` | `Wallabag` | Default folder for pulled notes |
+| `folders.attachments` | `Attachments/Wallabag` | Downloaded article images |
+| `watchers.dailyNotesHarvest.tagOnSubmit` | `["from-daily-note"]` | Tags added to harvested URLs |
+| `watchers.clipperBridge.clipperTag` | `clippings` | Tag used to detect clipper notes |
+
+## Commands
+
+Every action is exposed as an Obsidian command.
+
+| Command ID | Display name |
+| --- | --- |
+| `wallabag:sync-pull` | Wallabag: Pull articles from server |
+| `wallabag:sync-push-new` | Wallabag: Push new content to server |
+| `wallabag:sync-push-frontmatter` | Wallabag: Push frontmatter state to server |
+| `wallabag:sync-bidirectional` | Wallabag: Full bidirectional sync |
+| `wallabag:push-current-note` | Wallabag: Push current note to server |
+| `wallabag:harvest-daily-notes` | Wallabag: Harvest URLs from daily notes |
+| `wallabag:authenticate-interactive` | Wallabag: Authenticate (interactive) |
+| `wallabag:authenticate-headless` | Wallabag: Authenticate (from settings.json) |
+| `wallabag:logout` | Wallabag: Logout |
+| `wallabag:clear-synced-cache` | Wallabag: Clear synced-articles cache |
+| `wallabag:delete-and-forget` | Wallabag: Delete note and remove from synced cache |
+| `wallabag:dump-state` | Wallabag: Write state snapshot to disk |
+
+## Frontmatter contract
+
+Pulled notes use frontmatter as the sync layer. These fields matter most:
+
+```yaml
+---
+wallabag_id: 123
+wallabag_url: https://wallabag.example.com/view/123
+source_url: https://example.com/article
+given_url: https://example.com/article
+tags:
+  - reading
+read: false
+starred: false
+date_added: 2026-04-18T12:00:00Z
+date_read: null
+published_at: 2026-04-10T00:00:00Z
+wallabag_last_synced: 2026-04-19T09:00:00Z
+clipper_source: https://example.com/article
+---
+```
+
+Writable fields:
+
+- `tags`
+- `read`
+- `starred`
+
+If Wallabag has changed remotely after `wallabag_last_synced`, local frontmatter pushes are skipped and reported as conflicts.
 
 ## Templating
 
-By default this plugin offers two builtin templates; one for inserting the content of the article as a note and one for creating a note with a link to the exported PDF, when the option is enabled. Both the templates include link to the original articles, a link to the Wallabag item and tags. See the example below:
+Built-in templates create markdown notes or PDF-link notes. You can also point `template.path` at a custom markdown file.
 
-![](screenshots/ss1.png)
+Available variables:
 
-You can use a custom template, in that case plugin will pass the following variables.
 | Variable | Description |
-|:----------------|:-------------------------------------------------------------------------------------------------------------------|
-| `id` | Wallabag ID of the article <sub><br>Add this to your notes frontmatter using the `wallabag_id` key to make use of the 'Delete note and remove it from synced articles cache' command. </sub> |
-| `article_title` | Title of the article |
-| `original_link` | Link to the source article |
-| `given_url` | Given link to the source page |
-| `created_at` | Creation date of the article in Wallabag |
-| `published_at` | When the article was originally published according to Wallabag |
-| `updated_at` | Last modification date of the article in Wallabag RemoveCurrentFromSyncedArticlesCacheCommand |
-| `wallabag_link` | Link to the article in Wallabag |
-| `content` | HTML content extracted by wallabag |
-| `pdf_link` | An Obsidian wikilink to the exported pdf file. <sub><br> Only populated if the PDF export option is choosen.</sub> |
-| `tags` | Tags attached to the Wallabag article, format depends on the setting |
-| `reading_time` | Reading time of the article |
-| `preview_picture` | link to preview picture of the article |
-| `domain_name` | Link to the source domain article |
-| `is_archived` | Whether the article is archived or not |
-| `is_starred` | Whether the article is starred or not |
+| --- | --- |
+| `{{frontmatter}}` | Canonical Wallabag frontmatter block |
+| `{{id}}` | Wallabag entry ID |
+| `{{article_title}}` | Article title |
+| `{{original_link}}` | Source URL |
+| `{{given_url}}` | Submitted URL |
+| `{{created_at}}` | Wallabag creation timestamp |
+| `{{published_at}}` | Published timestamp |
+| `{{updated_at}}` | Last Wallabag update timestamp |
+| `{{wallabag_link}}` | Wallabag entry URL |
+| `{{content}}` | Article content after attachment rewriting / markdown conversion |
+| `{{pdf_link}}` | Exported PDF path when PDF export is enabled |
+| `{{tags}}` | Tags rendered in the configured tag format |
+| `{{reading_time}}` | Reading time |
+| `{{preview_picture}}` | Preview image URL |
+| `{{domain_name}}` | Domain name |
+| `{{annotations}}` | Pulled Wallabag annotations |
+| `{{is_archived}}` / `{{read}}` | Read/archive state |
+| `{{is_starred}}` / `{{starred}}` | Starred state |
+| `{{date_read}}` | Archived timestamp when available |
 
-I mainly use this plugin to export articles as pdfs and use [Annotator](https://github.com/elias-sundqvist/obsidian-annotator) to read using the following template.
+If `template.emitFullFrontmatter` is enabled, the plugin prepends canonical frontmatter unless the template already inserts `{{frontmatter}}`.
 
+## Watchers
+
+### Linked note watcher
+
+When `watchers.vaultFileWatcher` is enabled, edits to linked-note frontmatter are debounced and reconciled back to Wallabag.
+
+### Daily notes
+
+When `watchers.dailyNotesHarvest.enabled` is enabled and the core Daily Notes plugin is active, the plugin watches the Daily Notes folder, extracts URLs, submits unseen ones, and marks processed lines with:
+
+```text
+— wallabag'd
 ```
----
-annotation-target: {{pdf_link}}
----
+
+### Clipper bridge
+
+When `watchers.clipperBridge.enabled` is enabled, newly created notes tagged with `watchers.clipperBridge.clipperTag` are treated as push candidates.
+
+## Attachments
+
+If `attachments.download` is enabled, article images are downloaded into:
+
+- `[VAULT]/Attachments/Wallabag/<wallabag_id>/...`
+
+The plugin rewrites article content to point to local files and can emit markdown wikilinks for downloaded images.
+
+## Headless usage
+
+Example `settings.json`:
+
+```json
+{
+  "$schemaVersion": 1,
+  "server": {
+    "url": "https://wallabag.example.com",
+    "clientId": "client-id",
+    "clientSecret": "client-secret"
+  },
+  "auth": {
+    "username": "me",
+    "password": "secret",
+    "storeCredentials": false
+  },
+  "push": {
+    "enableRemoteWrites": false,
+    "pushNewContent": true,
+    "pushFrontmatterUpdates": true,
+    "pushDebounceMs": 2000,
+    "onLocalDelete": "ignore"
+  },
+  "timer": {
+    "enabled": true,
+    "intervalMinutes": 30,
+    "runOnStartup": false
+  }
+}
 ```
 
-![](screenshots/ss2.png)
+Typical command flow:
+
+```bash
+obsidian command id="wallabag:authenticate-headless"
+obsidian command id="wallabag:sync-bidirectional"
+obsidian property:set path="Wallabag/Some article.md" name="read" value="true"
+obsidian command id="wallabag:sync-push-frontmatter"
+```
 
 ## Installation
 
 ### Manually
 
-- You need Obsidian v1.12.2+ for latest version of plugin.
-- Get the [Latest release of the plugin](https://github.com/huseyz/obsidian-wallabag/releases/latest).
-- Create a directory for the plugin under you plugins folder, e.g. `[VAULT]/.obsidian/plugins/obsidian-wallabag`.
-- Put the release files under that folder.
-- Reload Obsidian.
-- Make sure Safe Mode is off and the plugins is enabled.
+- You need Obsidian v1.12.2+.
+- Download the latest release.
+- Create `[VAULT]/.obsidian/plugins/wallabag`.
+- Copy `main.js`, `manifest.json`, and `styles.css` into that folder.
+- Reload Obsidian and enable the plugin.
 
 ## Development
 
 ### Workflow
 
-- `npm install`.
-- `npm run build`.
-- Copy `main.js` and `manifest.json` (if changed) to your obsidian vault's plugin folder (e.g. `[VAULT]/.obsidian/plugins/obsidian-wallabag`).
-- Disable and re-enable the plugin in Obsidian's settings to reload it.
+- `npm install`
+- `npm run build`
+- `npm run lint`
+- Copy the built plugin files into your vault's plugin directory
+- Reload the plugin in Obsidian
 
-### State
+### State files
 
-Relative to `[VAULT]/.obsidian/plugins/obsidian-wallabag`:
+Relative to `[VAULT]/.obsidian/plugins/wallabag`:
 
-- `.synced`: List of all id's that have already been downloaded. Plugin will not attempt to download these articles again until cleared.
-- `.__wallabag_token__`: Authentication credentials for Wallabag.
+- `.synced` — pulled article IDs
+- `.dedup.json` — normalized URL dedup cache for push-new flows
+- `.dry-run.log` — logged remote mutations while writes are disarmed
+- `.wallabag-debug.json` — state dump from `wallabag:dump-state`
+- `.__wallabag_token__` — stored Wallabag token

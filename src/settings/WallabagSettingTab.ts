@@ -1,303 +1,262 @@
 import WallabagPlugin from 'main';
-import { App, Notice, PluginSettingTab, sanitizeHTMLToDom, Setting } from 'obsidian';
-import WallabagAPI from 'wallabag/WallabagAPI';
-import { WallabagSettings } from './WallabagSettings';
-
-export interface TextSetting {
-  name: string;
-  desc: string | DocumentFragment;
-  class?: string;
-  get: () => string;
-  set: (v: string) => void;
-}
+import { App, Notice, PluginSettingTab, Setting, TextAreaComponent, sanitizeHTMLToDom } from 'obsidian';
 
 export class WallabagSettingTab extends PluginSettingTab {
-  private plugin: WallabagPlugin;
-  private isAuthenticated: () => boolean;
+  private readonly plugin: WallabagPlugin;
 
-  constructor(app: App, plugin: WallabagPlugin, isAuthenticated: () => boolean) {
+  constructor(app: App, plugin: WallabagPlugin) {
     super(app, plugin);
     this.plugin = plugin;
-    this.isAuthenticated = isAuthenticated;
   }
 
-  display() {
-    this.containerEl.empty();
-    (
+  display(): void {
+    const { containerEl } = this;
+    const settings = this.plugin.settings;
+    containerEl.empty();
+
+    containerEl.createEl('p', {
+      text: `Headless-editable settings live at ${this.plugin.manifest.dir}/settings.json and are mirrored into Obsidian's data store.`,
+    });
+
+    containerEl.createEl('h2', { text: 'Server' });
+    this.addText('Server URL', 'Base URL for the Wallabag instance.', settings.server.url, async (value) => {
+      await this.plugin.saveSettings({ server: { url: value.trim() } });
+    });
+    this.addText('Client ID', 'OAuth client ID used for authentication.', settings.server.clientId, async (value) => {
+      await this.plugin.saveSettings({ server: { clientId: value.trim() } });
+    });
+    this.addText('Client Secret', 'OAuth client secret used for authentication.', settings.server.clientSecret, async (value) => {
+      await this.plugin.saveSettings({ server: { clientSecret: value.trim() } });
+    }, true);
+
+    containerEl.createEl('h2', { text: 'Authentication' });
+    this.addText('Username', 'Optional for headless auth.', settings.auth.username, async (value) => {
+      await this.plugin.saveSettings({ auth: { username: value } });
+    });
+    this.addText('Password', 'Optional for headless auth.', settings.auth.password, async (value) => {
+      await this.plugin.saveSettings({ auth: { password: value } });
+    }, true);
+    this.addToggle('Store credentials', 'Keep username/password in settings.json after headless auth.', settings.auth.storeCredentials, async (value) => {
+      await this.plugin.saveSettings({ auth: { storeCredentials: value } });
+    });
+    new Setting(containerEl)
+      .setName('Session actions')
+      .setDesc('Use stored credentials or clear the current token.')
+      .addButton((button) =>
+        button.setButtonText('Authenticate').setCta().onClick(async () => {
+          await this.plugin.authenticateFromSettings();
+        })
+      )
+      .addButton((button) =>
+        button.setButtonText('Logout').setWarning().onClick(async () => {
+          await this.plugin.onLogout();
+          new Notice('Wallabag session cleared.');
+        })
+      );
+
+    containerEl.createEl('h2', { text: 'Pull' });
+    this.addToggle('Enable pull', 'Allow pull commands and timers to fetch Wallabag entries.', settings.pull.enabled, async (value) => {
+      await this.plugin.saveSettings({ pull: { enabled: value } });
+    });
+    this.addText('Tag filter', 'Only fetch tagged Wallabag entries when set.', settings.pull.tagFilter, async (value) => {
+      await this.plugin.saveSettings({ pull: { tagFilter: value.trim() } });
+    });
+    this.addToggle('Sync unread', 'Include unread items in pull results.', settings.pull.syncUnread, async (value) => {
+      await this.plugin.saveSettings({ pull: { syncUnread: value } });
+    });
+    this.addToggle('Sync archived', 'Include archived items in pull results.', settings.pull.syncArchived, async (value) => {
+      await this.plugin.saveSettings({ pull: { syncArchived: value } });
+    });
+    this.addToggle('Archive after sync', 'Archive pulled entries after a successful sync.', settings.pull.archiveAfterSync, async (value) => {
+      await this.plugin.saveSettings({ pull: { archiveAfterSync: value } });
+    });
+    this.addToggle('Convert HTML to Markdown', 'Convert pulled HTML into markdown before templating.', settings.pull.convertHtmlToMarkdown, async (value) => {
+      await this.plugin.saveSettings({ pull: { convertHtmlToMarkdown: value } });
+    });
+    this.addToggle('Download as PDF', 'Export each Wallabag entry as PDF.', settings.pull.downloadAsPDF, async (value) => {
+      await this.plugin.saveSettings({ pull: { downloadAsPDF: value } });
+      this.display();
+    });
+    this.addToggle('Create PDF note', 'Create a note alongside the exported PDF.', settings.pull.createPDFNote, async (value) => {
+      await this.plugin.saveSettings({ pull: { createPDFNote: value } });
+    });
+    this.addToggle('Append ID to title', 'Add the Wallabag ID to generated note names.', settings.pull.idInTitle, async (value) => {
+      await this.plugin.saveSettings({ pull: { idInTitle: value } });
+    });
+    this.addDropdown(
+      'Tag format',
+      sanitizeHTMLToDom('How `{{tags}}` is rendered in templates.'),
+      settings.pull.tagFormat,
       [
-        {
-          name: 'Server URL',
-          desc: 'Wallabag server to connect.',
-          get: () => this.plugin.settings.serverUrl,
-          set: this.updateSetting('serverUrl'),
-        },
-        {
-          name: 'Tag to sync',
-          desc: 'If set, only articles with this tag will be synced.',
-          get: () => this.plugin.settings.tag,
-          set: this.updateSetting('tag'),
-        },
-        {
-          name: 'Wallabag article notes folder location',
-          desc: 'Choose the location where the synced article notes will be created.',
-          get: () => this.plugin.settings.folder,
-          set: this.updateSetting('folder'),
-        },
-        {
-          name: 'Article note template file',
-          desc: sanitizeHTMLToDom(
-            'The template file that will be used for the new articles.<br> ' +
-              'See <a href="https://github.com/huseyz/obsidian-wallabag">documentation</a> for examples.'
-          ),
-          get: () => this.plugin.settings.articleTemplate,
-          set: this.updateSetting('articleTemplate'),
-        },
-      ] as TextSetting[]
-    ).forEach(this.addTextSettingHere);
+        { value: 'csv', label: 'CSV' },
+        { value: 'hashtag', label: 'Hashtags' },
+      ],
+      async (value) => {
+        await this.plugin.saveSettings({ pull: { tagFormat: value as 'csv' | 'hashtag' } });
+      }
+    );
 
-    this.containerEl.createEl('h2', { text: 'Sync Behavior' });
+    containerEl.createEl('h2', { text: 'Push' });
+    this.addToggle('Enable remote writes', 'Arms POST/PATCH/DELETE calls. Disabled means dry-run only.', settings.push.enableRemoteWrites, async (value) => {
+      await this.plugin.saveSettings({ push: { enableRemoteWrites: value } });
+    });
+    this.addToggle('Push new content', 'Allow new URL detection to create Wallabag entries.', settings.push.pushNewContent, async (value) => {
+      await this.plugin.saveSettings({ push: { pushNewContent: value } });
+    });
+    this.addToggle('Push frontmatter updates', 'Allow linked notes to PATCH read/starred/tags back to Wallabag.', settings.push.pushFrontmatterUpdates, async (value) => {
+      await this.plugin.saveSettings({ push: { pushFrontmatterUpdates: value } });
+    });
+    this.addText('Push debounce (ms)', 'Debounce delay before watcher-driven pushes run.', String(settings.push.pushDebounceMs), async (value) => {
+      await this.plugin.saveSettings({ push: { pushDebounceMs: Number(value) || settings.push.pushDebounceMs } });
+    });
+    this.addDropdown(
+      'On local delete',
+      'Choose whether note deletion propagates to Wallabag.',
+      settings.push.onLocalDelete,
+      [
+        { value: 'ignore', label: 'Ignore' },
+        { value: 'archive', label: 'Archive' },
+        { value: 'delete', label: 'Delete' },
+      ],
+      async (value) => {
+        await this.plugin.saveSettings({ push: { onLocalDelete: value as 'ignore' | 'archive' | 'delete' } });
+      }
+    );
 
-    new Setting(this.containerEl)
-      .setName('Sync on startup')
-      .setDesc('If enabled, articles will be synced on startup.')
-      .addToggle(async (toggle) => {
-        toggle.setValue(this.plugin.settings.syncOnStartup === 'true').onChange(async (value) => {
-          this.plugin.settings.syncOnStartup = String(value);
-          await this.plugin.saveSettings();
-          this.display();
-        });
-      });
-
-    new Setting(this.containerEl)
-      .setName('Sync unread articles')
-      .setDesc('If enabled, unread articles will be synced.')
-      .addToggle(async (toggle) => {
-        toggle.setValue(this.plugin.settings.syncUnRead === 'true').onChange(async (value) => {
-          this.plugin.settings.syncUnRead = String(value);
-          await this.plugin.saveSettings();
-          this.display();
-        });
-      });
-
-    this.addTextSettingHere({
-      name: 'Wallabag unread article notes folder location',
-      desc: sanitizeHTMLToDom(
-        '(optional) Choose the location where the unread synced article notes will be created.<br>' +
-          'If not specified, the article notes folder will be used.'
-      ),
-      get: () => this.plugin.settings.unreadFolder,
-      set: this.updateSetting('unreadFolder'),
+    containerEl.createEl('h2', { text: 'Folders & template' });
+    this.addText('Notes folder', 'Default folder for pulled article notes.', settings.folders.notes, async (value) => {
+      await this.plugin.saveSettings({ folders: { notes: value.trim() } });
+    });
+    this.addText('Unread notes folder', 'Optional override for unread entries.', settings.folders.unreadNotes, async (value) => {
+      await this.plugin.saveSettings({ folders: { unreadNotes: value.trim() } });
+    });
+    this.addText('Archived notes folder', 'Optional override for archived entries.', settings.folders.archivedNotes, async (value) => {
+      await this.plugin.saveSettings({ folders: { archivedNotes: value.trim() } });
+    });
+    this.addText('PDF folder', 'Folder for exported PDFs.', settings.folders.pdfs, async (value) => {
+      await this.plugin.saveSettings({ folders: { pdfs: value.trim() } });
+    });
+    this.addText('Attachments folder', 'Folder for locally downloaded images.', settings.folders.attachments, async (value) => {
+      await this.plugin.saveSettings({ folders: { attachments: value.trim() } });
+    });
+    this.addText('Template path', 'Optional markdown template path.', settings.template.path, async (value) => {
+      await this.plugin.saveSettings({ template: { path: value.trim() } });
+    });
+    this.addToggle('Emit full frontmatter', 'Prepend canonical Wallabag frontmatter to generated notes.', settings.template.emitFullFrontmatter, async (value) => {
+      await this.plugin.saveSettings({ template: { emitFullFrontmatter: value } });
     });
 
-    new Setting(this.containerEl)
-      .setName('Sync archived articles')
-      .setDesc('If enabled, archived articles will be synced.')
-      .addToggle(async (toggle) => {
-        toggle.setValue(this.plugin.settings.syncArchived === 'true').onChange(async (value) => {
-          this.plugin.settings.syncArchived = String(value);
-          await this.plugin.saveSettings();
-          this.display();
-        });
-      });
-
-    this.addTextSettingHere({
-      name: 'Wallabag archived article notes folder location',
-      desc: sanitizeHTMLToDom(
-        '(optional) Choose the location where the archived synced article notes will be created.<br>' +
-          'If not specified, the article notes folder will be used.'
-      ),
-      get: () => this.plugin.settings.archivedFolder,
-      set: this.updateSetting('archivedFolder'),
+    containerEl.createEl('h2', { text: 'Timer & watchers' });
+    this.addToggle('Timer enabled', 'Run periodic pull on a timer.', settings.timer.enabled, async (value) => {
+      await this.plugin.saveSettings({ timer: { enabled: value } });
+    });
+    this.addText('Interval minutes', 'Timer interval in minutes.', String(settings.timer.intervalMinutes), async (value) => {
+      await this.plugin.saveSettings({ timer: { intervalMinutes: Number(value) || settings.timer.intervalMinutes } });
+    });
+    this.addToggle('Run bidirectional sync on startup', 'Kick off reconciliation when the plugin loads.', settings.timer.runOnStartup, async (value) => {
+      await this.plugin.saveSettings({ timer: { runOnStartup: value } });
+    });
+    this.addToggle('Watch linked note edits', 'Watch vault changes for linked-note frontmatter updates.', settings.watchers.vaultFileWatcher, async (value) => {
+      await this.plugin.saveSettings({ watchers: { vaultFileWatcher: value } });
+    });
+    this.addToggle('Daily notes harvest', 'Watch the core Daily Notes folder for new URLs.', settings.watchers.dailyNotesHarvest.enabled, async (value) => {
+      await this.plugin.saveSettings({ watchers: { dailyNotesHarvest: { enabled: value } } });
+    });
+    this.addToggle('Daily notes submit unread', 'Create harvested entries as unread by default.', settings.watchers.dailyNotesHarvest.submitUnreadByDefault, async (value) => {
+      await this.plugin.saveSettings({ watchers: { dailyNotesHarvest: { submitUnreadByDefault: value } } });
+    });
+    this.addTextArea('Daily-note tags', 'Comma-separated tags attached to harvested daily-note submissions.', settings.watchers.dailyNotesHarvest.tagOnSubmit.join(', '), async (value) => {
+      await this.plugin.saveSettings({ watchers: { dailyNotesHarvest: { tagOnSubmit: this.parseTags(value) } } });
+    });
+    this.addToggle('Clipper bridge', 'Watch new notes tagged as clippings and submit them to Wallabag.', settings.watchers.clipperBridge.enabled, async (value) => {
+      await this.plugin.saveSettings({ watchers: { clipperBridge: { enabled: value } } });
+    });
+    this.addText('Clipper tag', 'Tag used to detect Web Clipper notes.', settings.watchers.clipperBridge.clipperTag, async (value) => {
+      await this.plugin.saveSettings({ watchers: { clipperBridge: { clipperTag: value.trim().replace(/^#/, '') } } });
+    });
+    this.addTextArea('Clipper tags on submit', 'Comma-separated tags added when a clipper note is pushed.', settings.watchers.clipperBridge.tagOnSubmit.join(', '), async (value) => {
+      await this.plugin.saveSettings({ watchers: { clipperBridge: { tagOnSubmit: this.parseTags(value) } } });
     });
 
-    new Setting(this.containerEl)
-      .setName('Archive article after sync')
-      .setDesc('If enabled the article will be archived after being synced.')
-      .addToggle(async (toggle) => {
-        toggle.setValue(this.plugin.settings.archiveAfterSync === 'true');
-        toggle.onChange(async (value) => {
-          this.plugin.settings.archiveAfterSync = String(value);
-          await this.plugin.saveSettings();
-        });
-      });
-
-    this.containerEl.createEl('h2', { text: 'Obsidian note creation' });
-
-    new Setting(this.containerEl)
-      .setName('Convert HTML Content extracted by Wallabag to Markdown')
-      .setDesc('If enabled the content of the Wallabag article will be converted to markdown before being used for the new article.')
-      .addToggle(async (toggle) => {
-        toggle.setValue(this.plugin.settings.convertHtmlToMarkdown === 'true');
-        toggle.onChange(async (value) => {
-          this.plugin.settings.convertHtmlToMarkdown = String(value);
-          await this.plugin.saveSettings();
-        });
-      });
-
-    new Setting(this.containerEl)
-      .setName('Add article ID in the title')
-      .setDesc('If enabled the article ID will be added to title.')
-      .addToggle(async (toggle) => {
-        toggle.setValue(this.plugin.settings.idInTitle === 'true');
-        toggle.onChange(async (value) => {
-          this.plugin.settings.idInTitle = String(value);
-          await this.plugin.saveSettings();
-        });
-      });
-
-    new Setting(this.containerEl)
-      .setName('Tag format')
-      .setDesc(
-        sanitizeHTMLToDom(
-          'Determines how the tags will be populated in the created note. <br>' +
-            'CSV: Comma-separeted tags e.g. <code>tag1, tag2, tag3</code> <br>' +
-            'Hashtags: Space-separeted hashtags<code>#tag1 #tag2 #tag3</code> <br>'
-        )
-      )
-      .addDropdown(async (dropdown) => {
-        dropdown.addOption('csv', 'CSV');
-        dropdown.addOption('hashtag', 'Hashtags');
-        dropdown.setValue(this.plugin.settings.tagFormat);
-        dropdown.onChange(async (value) => {
-          this.plugin.settings.tagFormat = value;
-          await this.plugin.saveSettings();
-        });
-      });
-
-    this.containerEl.createEl('h2', { text: 'Export as PDF' });
-
-    new Setting(this.containerEl)
-      .setName('Export as PDF')
-      .setDesc('If enabled synced articles will be exported as PDFs.')
-      .addToggle(async (toggle) => {
-        toggle.setValue(this.plugin.settings.downloadAsPDF === 'true').onChange(async (value) => {
-          this.plugin.settings.downloadAsPDF = String(value);
-          await this.plugin.saveSettings();
-          this.display();
-        });
-      });
-
-    const pdfSettingsClass = this.plugin.settings.downloadAsPDF !== 'true' ? 'wallabag-setting-hidden' : 'wallabag-pdf-setting';
-
-    this.addTextSettingHere({
-      name: 'PDF Folder',
-      desc: 'The folder exported PDFs will be downloaded.',
-      get: () => this.plugin.settings.pdfFolder,
-      set: this.updateSetting('pdfFolder'),
-      class: pdfSettingsClass,
+    containerEl.createEl('h2', { text: 'Attachments' });
+    this.addToggle('Download attachments', 'Download article images into the vault.', settings.attachments.download, async (value) => {
+      await this.plugin.saveSettings({ attachments: { download: value } });
+    });
+    this.addText('Max images per article', 'Cap attachment downloads per article.', String(settings.attachments.maxImagesPerArticle), async (value) => {
+      await this.plugin.saveSettings({ attachments: { maxImagesPerArticle: Number(value) || settings.attachments.maxImagesPerArticle } });
+    });
+    this.addText('Max bytes per image', 'Skip images larger than this size.', String(settings.attachments.maxBytesPerImage), async (value) => {
+      await this.plugin.saveSettings({ attachments: { maxBytesPerImage: Number(value) || settings.attachments.maxBytesPerImage } });
+    });
+    this.addToggle('Rewrite to wikilinks', 'Rewrite downloaded markdown images to `![[...]]`.', settings.attachments.rewriteToWikilinks, async (value) => {
+      await this.plugin.saveSettings({ attachments: { rewriteToWikilinks: value } });
     });
 
-    new Setting(this.containerEl)
-      .setName('Create note')
-      .setDesc(
-        'If enabled a note will be created in the article note folder for each article exported as pdf. Article note template will be used if specified.'
-      )
-      .setClass(pdfSettingsClass)
-      .addToggle(async (toggle) => {
-        toggle.setValue(this.plugin.settings.createPDFNote === 'true');
-        toggle.onChange(async (value) => {
-          this.plugin.settings.createPDFNote = String(value);
-          await this.plugin.saveSettings();
-        });
-      });
-
-    this.authenticationSettings();
+    containerEl.createEl('h2', { text: 'Dry-run' });
+    this.addToggle('Log dry-run mutations', 'Append intended remote writes to `.dry-run.log`.', settings.dryRun.logMutations, async (value) => {
+      await this.plugin.saveSettings({ dryRun: { logMutations: value } });
+    });
   }
 
-  private addTextSetting = (setting: TextSetting, el: HTMLElement): void => {
-    const result = new Setting(el)
-      .setName(setting.name)
-      .setDesc(setting.desc)
+  private addText(name: string, desc: string | DocumentFragment, value: string, onSave: (value: string) => Promise<void>, secret = false): void {
+    new Setting(this.containerEl)
+      .setName(name)
+      .setDesc(desc)
       .addText((text) => {
-        text.setValue(setting.get()).onChange(async (value) => {
-          setting.set(value);
+        text.setValue(value);
+        if (secret) {
+          text.inputEl.type = 'password';
+        }
+        text.onChange(async (next) => {
+          await onSave(next);
         });
       });
-    if (setting.class) {
-      result.setClass(setting.class);
-    }
-  };
+  }
 
-  private addTextSettingHere = (setting: TextSetting): void => {
-    this.addTextSetting(setting, this.containerEl);
-  };
-
-  private updateSetting =
-    (key: keyof WallabagSettings): ((v: string) => void) =>
-      async (v: string) => {
-        this.plugin.settings[key] = v;
-        await this.plugin.saveSettings();
-      };
-
-  private authenticationSettings() {
-    this.containerEl.createEl('h2', { text: 'Authentication' });
-
-    let clientId = '',
-      clientSecret = '',
-      username = '',
-      password = '';
-
-    if (this.isAuthenticated()) {
-      this.containerEl.createEl('strong', { text: 'You are currently authenticated, to change authentication settings, logout first.' });
-    }
-
-    const authenticationClass = this.isAuthenticated() ? 'wallabag-setting-hidden' : 'wallabag-setting-shown';
-
-    (
-      [
-        {
-          name: 'Client ID',
-          desc: 'Wallabag client id',
-          get: () => '',
-          set: (v) => (clientId = v),
-          class: authenticationClass,
-        },
-        {
-          name: 'Client Secret',
-          desc: 'Wallabag client secret',
-          get: () => '',
-          set: (v) => (clientSecret = v),
-          class: authenticationClass,
-        },
-        {
-          name: 'Username',
-          desc: 'Wallabag username',
-          get: () => '',
-          set: (v) => (username = v),
-          class: authenticationClass,
-        },
-        {
-          name: 'Password',
-          desc: 'Wallabag Password',
-          get: () => '',
-          set: (v) => (password = v),
-          class: authenticationClass,
-        },
-      ] as TextSetting[]
-    ).forEach(this.addTextSettingHere);
-
-    new Setting(this.containerEl).addButton((button) => {
-      button
-        .setButtonText(this.isAuthenticated() ? 'Logout' : 'Authenticate')
-        .setClass(this.isAuthenticated() ? 'mod-warning' : 'mod-cta')
-        .onClick(async () => {
-          if (this.isAuthenticated()) {
-            await this.plugin.onLogout();
-            this.display();
-          } else {
-            const notice = new Notice('Authenticating with Wallabag...');
-            try {
-              await WallabagAPI.authenticate(this.plugin.settings.serverUrl, clientId, clientSecret, username, password).then(async (token) => {
-                await this.plugin.onAuthenticated(token);
-                this.display();
-                notice.setMessage('Authenticated with Wallabag.');
-              });
-            } catch (error) {
-              console.log(error);
-              notice.setMessage('Authentication with Wallabag failed.');
-            }
-          }
+  private addTextArea(name: string, desc: string | DocumentFragment, value: string, onSave: (value: string) => Promise<void>): void {
+    new Setting(this.containerEl)
+      .setName(name)
+      .setDesc(desc)
+      .addTextArea((text: TextAreaComponent) => {
+        text.setValue(value).onChange(async (next) => {
+          await onSave(next);
         });
-    });
+      });
+  }
+
+  private addToggle(name: string, desc: string | DocumentFragment, value: boolean, onSave: (value: boolean) => Promise<void>): void {
+    new Setting(this.containerEl)
+      .setName(name)
+      .setDesc(desc)
+      .addToggle((toggle) => {
+        toggle.setValue(value).onChange(async (next) => {
+          await onSave(next);
+        });
+      });
+  }
+
+  private addDropdown(
+    name: string,
+    desc: string | DocumentFragment,
+    value: string,
+    options: Array<{ value: string; label: string }>,
+    onSave: (value: string) => Promise<void>
+  ): void {
+    new Setting(this.containerEl)
+      .setName(name)
+      .setDesc(desc)
+      .addDropdown((dropdown) => {
+        options.forEach((option) => dropdown.addOption(option.value, option.label));
+        dropdown.setValue(value).onChange(async (next) => {
+          await onSave(next);
+        });
+      });
+  }
+
+  private parseTags(value: string): string[] {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
 }
